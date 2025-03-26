@@ -53,7 +53,7 @@ SET Flag = CASE
         WHEN TRY_TO_DATE(Order_Date, 'YYYY-MM-DD') IS NULL
             THEN 'INVALID_DATE'
         WHEN ((Shipping_Address IS NULL OR TRIM(Shipping_Address) = '')
-                AND UPPER(Status) IS IN ('DELIVERED', 'SHIPPED'))
+                AND UPPER(Status) IN ('DELIVERED', 'SHIPPED'))
             THEN 'MISSING_SHIPPING_ADDRESS'
         WHEN TRY_TO_NUMBER(Quantity) <= 0 OR TRY_TO_DECIMAL(Price, 10, 2) <= 0
             THEN 'INVALID_QUANTITY_PRICE'
@@ -62,6 +62,14 @@ SET Flag = CASE
             THEN 'MISSING_CUSTOMER_INFO'
         ELSE 'VALID'
 END;
+
+
+--Count of records with the grouped by Flags
+SELECT Flag, COUNT(*) AS Record_Count
+FROM ECOMERCE_ORDERS_RAW
+GROUP BY Flag;
+
+
 
 --------------------------------------------------------------------------
 --------------------------INVALID DATE RECORDS----------------------------
@@ -111,6 +119,12 @@ SELECT DISTINCT
     Status
 FROM ECOMERCE_ORDERS_RAW
 WHERE Flag = 'INVALID_DATE';
+
+
+-- Preview of a few records with Invalid Date
+SELECT *
+FROM TD_INVALID_DATE_FORMAT
+LIMIT 10;
 
 
 
@@ -165,6 +179,13 @@ FROM ECOMERCE_ORDERS_RAW
 WHERE flag = 'MISSING_SHIPPING_ADDRESS';
 
 
+-- Preview of a few records without Shipping Address
+SELECT *
+FROM TD_FOR_REVIEW
+LIMIT 10;
+
+
+
 --------------------------------------------------------------------------
 ----------------------------INVALID QUANTITY------------------------------
 --------------------------------------------------------------------------
@@ -215,6 +236,11 @@ FROM ECOMERCE_ORDERS_RAW
 WHERE Flag = 'INVALID_QUANTITY_PRICE';
 
 
+-- Preview of a few records with Invalid Quantity or Price
+SELECT *
+FROM TD_INVALID_QUANTITY
+LIMIT 10;
+
 --------------------------------------------------------------------------
 ---------------------------SUSPICIOUS RECORDS-----------------------------
 --------------------------------------------------------------------------
@@ -264,6 +290,11 @@ SELECT DISTINCT
 FROM ECOMERCE_ORDERS_RAW
 WHERE Flag = 'MISSING_CUSTOMER_INFO';
 
+
+-- Preview of a few records without Customer ID or Customer Name
+SELECT *
+FROM TD_SUSPICIOUS_RECORDS
+LIMIT 10;
 
 --------------------------------------------------------------------------
 -------------------------------VALID DATA---------------------------------
@@ -327,3 +358,43 @@ FROM (
     FROM ECOMERCE_ORDERS_RAW
     WHERE Flag = 'VALID'
 ) AS a;
+
+
+
+-- Preview of a few VALID records
+SELECT *
+FROM TD_CLEAN_RECORDS
+LIMIT 10;
+
+
+-- Count of unique records in the raw table:
+SELECT COUNT(*) AS Raw_Record_Count
+FROM (
+    SELECT DISTINCT *
+    FROM ECOMERCE_ORDERS_RAW
+) AS t;
+
+
+-- Count of records in different tables and in all tables collected:
+SELECT 'TD_INVALID_DATE_FORMAT' AS Table_Name, COUNT(*) AS Record_Count 
+FROM TD_INVALID_DATE_FORMAT
+UNION ALL
+SELECT 'TD_FOR_REVIEW' AS Table_Name, COUNT(*) 
+FROM TD_FOR_REVIEW
+UNION ALL
+SELECT 'TD_SUSPICIOUS_RECORDS' AS Table_Name, COUNT(*) 
+FROM TD_SUSPICIOUS_RECORDS
+UNION ALL
+SELECT 'TD_INVALID_QUANTITY' AS Table_Name, COUNT(*) 
+FROM TD_INVALID_QUANTITY
+UNION ALL
+SELECT 'TD_CLEAN_RECORDS' AS Table_Name, COUNT(*) 
+FROM TD_CLEAN_RECORDS
+UNION ALL
+SELECT 'TOTAL_RECORDS' AS Table_Name, 
+       ((SELECT COUNT(*) FROM TD_INVALID_DATE_FORMAT) +
+        (SELECT COUNT(*) FROM TD_FOR_REVIEW) +
+        (SELECT COUNT(*) FROM TD_SUSPICIOUS_RECORDS) +
+        (SELECT COUNT(*) FROM TD_INVALID_QUANTITY) +
+        (SELECT COUNT(*) FROM TD_CLEAN_RECORDS)
+       ) AS Record_Count;
