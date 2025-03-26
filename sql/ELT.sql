@@ -1,6 +1,7 @@
 USE DATABASE IF NOT EXISTS ECOMERCE_DB;
 
----I started doing an ELT method of finishing the task first so I renamed the SCHEMA to --//--_ELT and I will create one with ETL method as well
+-- ELT Approach to the task -> I have started doing this first and I prefered to look into both scenarious instead of focusing on only one
+-- Depending on the approach there is added _ELT or _ETL at the end of the SCHEMA name to differ them
 CREATE SCHEMA STAGE_EXTERNAL_ELT;
 
 USE SCHEMA STAGE_EXTERNAL_ELT;
@@ -18,19 +19,50 @@ CREATE OR REPLACE TABLE ECOMERCE_ORDERS_RAW ( -- Creating a table to store valid
     Customer_Name VARCHAR,
     Order_Date VARCHAR,
     Product VARCHAR,
-    Quantity VARCHAR,
+    Quantity VARCHAR,разнообразни
     Price VARCHAR,
     Discount VARCHAR,
     Total_Amount VARCHAR,
     Payment_Method VARCHAR,
     Shipping_Address VARCHAR,
-    Status VARCHAR
+    Status VARCHAR,
+    Flag VARCHAR  -- Added Flag to the raw data records which will detirmine based on priority which table to be inserted into, this eliminates duplicates inside multiple tables
+
 );
 
 -- Copying all records from csv into raw data table
-COPY INTO ECOMERCE_ORDERS_RAW
+COPY INTO ECOMERCE_ORDERS_RAW(
+    Order_ID,
+    Customer_ID,
+    Customer_Name,
+    Order_Date,
+    Product,
+    Quantity,
+    Price,
+    Discount,
+    Total_Amount,
+    Payment_Method,
+    Shipping_Address,
+    Status
+)
 FROM @EXTERNAL_STAGE_CSV_ECOMERCE_DATA;
 
+
+-- Based on the order of priority I updated the flag in the raw data records and later that would help me with inserting them into the correct tables
+UPDATE ECOMERCE_ORDERS_RAW
+SET Flag = CASE
+        WHEN TRY_TO_DATE(Order_Date, 'YYYY-MM-DD') IS NULL
+            THEN 'INVALID_DATE'
+        WHEN ((Shipping_Address IS NULL OR TRIM(Shipping_Address) = '')
+                AND UPPER(Status) IN ('DELIVERED', 'SHIPPED'))
+            THEN 'MISSING_SHIPPING_ADDRESS'
+        WHEN TRY_TO_NUMBER(Quantity) <= 0 OR TRY_TO_DECIMAL(Price, 10, 2) <= 0
+            THEN 'INVALID_QUANTITY_PRICE'
+        WHEN Customer_ID IS NULL OR TRIM(Customer_ID) = ''
+                OR Customer_Name IS NULL OR TRIM(Customer_Name) = ''
+            THEN 'MISSING_CUSTOMER_INFO'
+        ELSE 'VALID'
+END; 
 
 
 --------------------------------------------------------------------------
@@ -80,7 +112,7 @@ SELECT DISTINCT
     Shipping_Address,
     Status
 FROM ECOMERCE_ORDERS_RAW
-WHERE TRY_TO_DATE(ORDER_DATE, 'YYYY-MM-DD') IS NULL; -- With that only the records which dates fail to convert to date are inserted inside TD_INVALID_DATE_FORMAT
+WHERE Flag = 'INVALID_DATE';
 
 
 --------------------------------------------------------------------------
@@ -131,8 +163,57 @@ SELECT DISTINCT
     Shipping_Address,
     Status
 FROM ECOMERCE_ORDERS_RAW
-WHERE SHIPPING_ADDRESS IS NULL AND STATUS LIKE 'Delivered';
+WHERE Flag = 'MISSING_SHIPPING_ADDRESS';
 
+
+--------------------------------------------------------------------------
+----------------------------INVALID QUANTITY------------------------------
+--------------------------------------------------------------------------
+
+CREATE TABLE TD_INVALID_QUANTITY (
+    Order_ID INT,
+    Customer_ID VARCHAR,
+    Customer_Name VARCHAR,
+    Order_Date DATE, 
+    Product VARCHAR,
+    Quantity INT,
+    Price FLOAT,
+    Discount FLOAT,
+    Total_Amount FLOAT,
+    Payment_Method VARCHAR,
+    Shipping_Address VARCHAR,
+    Status VARCHAR
+);
+
+INSERT INTO TD_INVALID_QUANTITY (
+    Order_ID,
+    Customer_ID,
+    Customer_Name,
+    Order_Date,
+    Product,
+    Quantity,
+    Price,
+    Discount,
+    Total_Amount,
+    Payment_Method,
+    Shipping_Address,
+    Status
+)
+SELECT DISTINCT
+    TRY_TO_NUMBER(Order_ID) AS Order_ID,
+    Customer_ID,
+    Customer_Name,
+    TRY_TO_DATE(Order_Date, 'YYYY-MM-DD') AS Order_Date,
+    Product,
+    TRY_TO_NUMBER(Quantity) AS Quantity,
+    TRY_TO_DECIMAL(Price, 10,2) AS Price,
+    TRY_TO_DECIMAL(Discount, 10, 2) AS Discount,
+    TRY_TO_DECIMAL(Total_Amount, 10, 2) AS Total_Amount,
+    Payment_Method,
+    Shipping_Address,
+    Status
+FROM ECOMERCE_ORDERS_RAW
+WHERE Flag = 'INVALID_QUANTITY_PRICE';
 
 
 --------------------------------------------------------------------------
@@ -183,60 +264,7 @@ SELECT DISTINCT
     Shipping_Address,
     Status
 FROM ECOMERCE_ORDERS_RAW
-WHERE CUSTOMER_ID IS NULL OR CUSTOMER_NAME IS NULL;
-
-
---------------------------------------------------------------------------
-----------------------------INVALID QUANTITY------------------------------
---------------------------------------------------------------------------
-
-CREATE TABLE TD_INVALID_QUANTITY (
-    Order_ID INT,
-    Customer_ID VARCHAR,
-    Customer_Name VARCHAR,
-    Order_Date DATE, 
-    Product VARCHAR,
-    Quantity INT,
-    Price FLOAT,
-    Discount FLOAT,
-    Total_Amount FLOAT,
-    Payment_Method VARCHAR,
-    Shipping_Address VARCHAR,
-    Status VARCHAR
-);
-
-INSERT INTO TD_INVALID_QUANTITY (
-    Order_ID,
-    Customer_ID,
-    Customer_Name,
-    Order_Date,
-    Product,
-    Quantity,
-    Price,
-    Discount,
-    Total_Amount,
-    Payment_Method,
-    Shipping_Address,
-    Status
-)
-SELECT DISTINCT
-    TRY_TO_NUMBER(Order_ID) AS Order_ID,
-    Customer_ID,
-    Customer_Name,
-    TRY_TO_DATE(Order_Date, 'YYYY-MM-DD') AS Order_Date,
-    Product,
-    TRY_TO_NUMBER(Quantity) AS Quantity,
-    TRY_TO_DECIMAL(Price, 10,2) AS Price,
-    TRY_TO_DECIMAL(Discount, 10, 2) AS Discount,
-    TRY_TO_DECIMAL(Total_Amount, 10, 2) AS Total_Amount,
-    Payment_Method,
-    Shipping_Address,
-    Status
-FROM ECOMERCE_ORDERS_RAW
-WHERE QUANTITY <= 0 OR PRICE <= 0;
-
-
-
+WHERE Flag = 'MISSING_CUSTOMER_INFO';
 
 
 --------------------------------------------------------------------------
@@ -298,17 +326,8 @@ FROM (
             END AS Payment_Method,
 
             Shipping_Address,
+            Status
 
-            -- Validating Status:
-            CASE 
-                WHEN (Shipping_Address IS NULL OR TRIM(Shipping_Address) = '')
-                    AND (UPPER(Status) = 'DELIVERED' OR UPPER(Status) = 'SHIPPED')  -- Order CANNOT be shipped or delivered if the Shipping_Adress is NULL
-                THEN 'Pending'
-                ELSE Status    
-            END AS Status
     FROM ECOMERCE_ORDERS_RAW
-) AS a
-WHERE Order_Date IS NOT NULL
-    AND Quantity > 0
-    AND Customer_ID IS NOT NULL AND TRIM(Customer_ID) != ''
-    AND Customer_Name IS NOT NULL AND TRIM(Customer_Name) != ''; 
+    WHERE Flag = 'VALID'
+) AS a;
